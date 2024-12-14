@@ -183,7 +183,7 @@ func initdB() (*sql.DB, error) {
 
 	}
 
-	db, err := sql.Open("sqlite", fmt.Sprintf("./%s", usersDB))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("./%s", usersDB))
 
 	if err != nil {
 		slog.Error("Error opening db file", "err", err)
