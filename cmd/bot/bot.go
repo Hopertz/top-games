@@ -14,7 +14,7 @@ import (
 	db "github.com/Hopertz/topgames/db/sqlc"
 	"github.com/Hopertz/topgames/poll"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
