@@ -126,7 +126,7 @@ func main() {
 			if err != nil {
 				slog.Error("failed to get bot active members", "err", err)
 			}
-			msg.Text = fmt.Sprintf("There are %d subscribers in chesswahiliBot", len(res))
+			msg.Text = fmt.Sprintf("There are %d subscribers in @TopRapidBot", len(res))
 
 		case "ml":
 			msg.Text = fmt.Sprintf("There are %d in a map so far.", len(*swbot.Links))
