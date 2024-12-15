@@ -134,6 +134,8 @@ func main() {
 		case "sm":
 			if poll.Master_ID == update.Message.From.ID {
 				is_maintenance_txt = true
+			}else {
+				msg.Text = "Only @Hopertz is allowed"
 			}
 
 		case "help":
