@@ -129,7 +129,7 @@ func main() {
 			msg.Text = fmt.Sprintf("There are %d subscribers in @TopRapidBot", len(res))
 
 		case "ml":
-			msg.Text = fmt.Sprintf("There are %d in a map so far.", len(*swbot.Links))
+			msg.Text = fmt.Sprintf("There are %d in a list so far.", len(*swbot.Links))
 
 		case "sm":
 			if poll.Master_ID == update.Message.From.ID {
