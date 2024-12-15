@@ -138,15 +138,14 @@ func main() {
 
 		case "help":
 			msg.Text = `
-			Commands for this @chesswahiliBot bot are:
+			Commands for this @TopRapidBot are:
 			
-			/start  start the bot (i.e., enable receiving of the game links)
-			/stop   stop the bot (i.e., disable receiving of the game links)
-			/subs   subscribers for the bot
-			/ml     current map length
-			/help   this help text
-			/sm     send maintenace message for @Hopertz only.
-			`
+			/start  start the bot
+			/stop   stop the bot 
+			/sub    total subscribers
+			/ml     current games in a list
+			/help   this message
+			/sm     send maintanance msg			`
 
 		default:
 			msg.Text = unknown_cmd
