@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	start_txt       = "Use this bot to get link of top rated games of 2500 and 2700's rated players. Type /stop to stop receiving notifications`"
-	stop_txt        = "Sorry to see you leave You wont be receiving notifications. Type /start to receive"
+	start_txt       = "Use this bot to get link of top rated games of 2500's and 2700's rated players. Type /stop to stop receiving notifications`"
+	stop_txt        = "Sorry to see you leave. Type /start to receive"
 	unknown_cmd     = "I don't know that command"
-	maintenance_txt = "We are having Bot maintenance. Service will resume shortly"
+	maintenance_txt = "Service will resume shortly"
 	usersDB         = "users.db"
 )
 
