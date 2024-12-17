@@ -84,14 +84,7 @@ func (sw *SWbot) PollTopGames() {
 					sw.mu.Unlock()
 					sw.SendMsgToTelegramIds(game.ID)
 
-				} else if w >= 2700 || b >= 2700 {
-
-					sw.mu.Lock()
-					(*sw.Links)[game.ID] = time.Now()
-					sw.mu.Unlock()
-					sw.SendMsgToTelegramIds(game.ID)
-
-				}
+				} 
 
 			}
 
