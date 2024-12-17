@@ -57,6 +57,8 @@ type Member struct {
 	PlayingId string `json:"playingId"`
 }
 
+
+// Poll games after every one minute, filter by rating (>2500), store them if not present in a map  & notify bot users
 func (sw *SWbot) PollTopGames() {
 
 	ticker := time.NewTicker(time.Minute * 1)
@@ -93,6 +95,7 @@ func (sw *SWbot) PollTopGames() {
 	}
 }
 
+// Fetch top rapid games on lichess and store them in list
 func fetchTopGames() []Game {
 
 	var games []Game
