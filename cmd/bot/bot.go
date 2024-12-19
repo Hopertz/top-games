@@ -144,7 +144,7 @@ func main() {
 			
 			/start  start the bot
 			/stop   stop the bot 
-			/sub    total subscribers
+			/subs    total subscribers
 			/ml     current games in a list
 			/help   this message
 			/sm     send maintanance msg			`
