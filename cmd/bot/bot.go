@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	start_txt       = "Use this bot to get link of top rated games between players of rating 2500's and above. Type /stop to stop receiving notifications`"
+	start_txt       = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications`"
 	stop_txt        = "Sorry to see you leave. Type /start to receive"
 	unknown_cmd     = "I don't know that command"
 	maintenance_txt = "Service will resume shortly"
