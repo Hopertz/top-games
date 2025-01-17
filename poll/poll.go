@@ -58,7 +58,7 @@ type Member struct {
 }
 
 
-// Poll games after every one minute, filter by rating (>2500), store them if not present in a map  & notify bot users
+// Poll games after every one minute, filter by rating (>2600), store them if not present in a map  & notify bot users
 func (sw *SWbot) PollTopGames() {
 
 	ticker := time.NewTicker(time.Minute * 1)
@@ -80,7 +80,7 @@ func (sw *SWbot) PollTopGames() {
 				w := game.Players.White.Rating
 				b := game.Players.Black.Rating
 
-				if w >= 2500 && b >= 2500 {
+				if w >= 2600 && b >= 2600 {
 					sw.mu.Lock()
 					(*sw.Links)[game.ID] = time.Now()
 					sw.mu.Unlock()
