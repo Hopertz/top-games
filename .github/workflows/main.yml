@@ -57,6 +57,6 @@ jobs:
                chmod +x topbot
                echo ${{ secrets.PASSWORD }} | sudo -S systemctl stop topbot.service 
                echo ${{ secrets.PASSWORD }} | sudo -S systemctl start topbot.service 
-               echo ${{ secrets.PASSWORD }} | sudo -S systemctl reload nginx
+          
 
  
