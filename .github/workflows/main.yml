@@ -43,7 +43,7 @@ jobs:
            password: ${{ secrets.PASSWORD }}
            port: ${{ secrets.PORT }}
            source: ./topbot
-           target: "/home/${{ secrets.USERNAME }}/Documents/top-bot"
+           target: "/home/${{ secrets.USERNAME }}/projects/top-bot"
 
       - name: Start ChessBot Swahili  service and Reload Nginx
         uses: appleboy/ssh-action@master
@@ -53,7 +53,7 @@ jobs:
            password: ${{ secrets.PASSWORD }}
            port: ${{ secrets.PORT }}
            script: |
-               cd  /home/${{ secrets.USERNAME }}/Documents/top-bot
+               cd  /home/${{ secrets.USERNAME }}/projects/top-bot
                chmod +x topbot
                echo ${{ secrets.PASSWORD }} | sudo -S systemctl stop topbot.service 
                echo ${{ secrets.PASSWORD }} | sudo -S systemctl start topbot.service 
