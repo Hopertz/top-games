@@ -95,20 +95,7 @@ func main() {
 			err := swbot.DB.InsertTgBotUsers(context.Background(), botUser)
 
 			if err != nil {
-				switch {
-				case err.Error() == `pq: duplicate key value violates unique constraint "tgbot_users_pkey"`:
-					args := db.UpdateTgBotUsersParams{
-						ID:       botUser.ID,
-						Isactive: botUser.Isactive,
-					}
-					err := swbot.DB.UpdateTgBotUsers(context.Background(), args)
-					if err != nil {
-						slog.Error("failed to update bot user", "err", err, "args", args)
-					}
-
-				default:
-					slog.Error("failed to insert bot user", "err", err, "args", botUser)
-				}
+				slog.Error("failed to insert bot user", "err", err, "args", botUser)
 			}
 
 		case "stop":
