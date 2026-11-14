@@ -154,15 +154,22 @@ func (sw *SWbot) cleanUpMap(links *map[string]time.Time) {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		sw.mu.Lock()
 		for lichessId, timeAtStart := range *links {
 			if time.Since(timeAtStart) > minLinkStayInMap {
-				sw.mu.Lock()
 				delete(*links, lichessId)
-				sw.mu.Unlock()
-
 			}
 		}
+		sw.mu.Unlock()
 	}
+}
+
+// Number of games currently tracked in the map
+func (sw *SWbot) LinksCount() int {
+	sw.mu.RLock()
+	defer sw.mu.RUnlock()
+
+	return len(*sw.Links)
 }
 
 func (sw *SWbot) SendMsgToTelegramIds(linkId string) {
