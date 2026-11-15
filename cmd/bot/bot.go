@@ -16,9 +16,13 @@ import (
 	"time"
 
 	"github.com/Hopertz/topgames/certs"
+	"github.com/Hopertz/topgames/db/migrations"
 	db "github.com/Hopertz/topgames/db/sqlc"
 	"github.com/Hopertz/topgames/poll"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/golang-migrate/migrate/v4"
+	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
@@ -216,25 +220,50 @@ func initPostgres(databaseURL string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	db := stdlib.OpenDB(*cfg)
-
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
-	defer cancel()
-
-	stmt := `CREATE TABLE IF NOT EXISTS tgbot_users (
-               id BIGINT NOT NULL PRIMARY KEY,
-               isactive BOOLEAN NOT NULL
-            );`
-
-	_, err = db.ExecContext(ctx, stmt)
-
-	if err != nil {
-		slog.Error("Error executing create table stmt", "err", err)
+	if err := runMigrations(cfg); err != nil {
+		slog.Error("Error running migrations", "err", err)
 		return nil, err
 	}
 
-	return db, nil
+	return stdlib.OpenDB(*cfg), nil
 
+}
+
+// Apply the migrations in db/migrations that have not been applied yet.
+// The applied version is kept in the schema_migrations table.
+func runMigrations(cfg *pgx.ConnConfig) error {
+
+	// migrate closes the connection it is given, so it gets its own
+	db := stdlib.OpenDB(*cfg)
+
+	source, err := iofs.New(migrations.Files, ".")
+
+	if err != nil {
+		db.Close()
+		return err
+	}
+
+	driver, err := pgxmigrate.WithInstance(db, &pgxmigrate.Config{})
+
+	if err != nil {
+		db.Close()
+		return err
+	}
+
+	m, err := migrate.NewWithInstance("iofs", source, "pgx5", driver)
+
+	if err != nil {
+		db.Close()
+		return err
+	}
+
+	defer m.Close()
+
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return err
+	}
+
+	return nil
 }
 
 func initRedis(redisURL string) (*redis.Client, error) {
