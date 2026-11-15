@@ -17,6 +17,10 @@ import (
 
 const top_games_url = "https://lichess.org/api/tv/rapid?nb=30&moves=false&tags=false"
 
+var lichessClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 type Game struct {
 	ID      string  `json:"id"`
 	Rated   bool    `json:"rated"`
@@ -124,10 +128,6 @@ func fetchTopGames() []Game {
 
 	var games []Game
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
 	req, err := http.NewRequest("GET", top_games_url, nil)
 
 	if err != nil {
@@ -137,13 +137,18 @@ func fetchTopGames() []Game {
 
 	req.Header.Set("Accept", "application/x-ndjson")
 
-	resp, err := client.Do(req)
+	resp, err := lichessClient.Do(req)
 	if err != nil {
 		slog.Error("failed to fetch top games", "err", err)
 		return games
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Error("lichess returned an error status", "status", resp.Status)
+		return games
+	}
 
 	results := json.NewDecoder(resp.Body)
 
