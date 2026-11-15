@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	db "github.com/Hopertz/topgames/db/sqlc"
@@ -26,6 +27,7 @@ type Game struct {
 	Rated   bool    `json:"rated"`
 	Status  string  `json:"status"`
 	Players Players `json:"players"`
+	Clock   Clock   `json:"clock"`
 }
 
 type Players struct {
@@ -34,7 +36,19 @@ type Players struct {
 }
 
 type Player struct {
-	Rating int `json:"rating"`
+	User   User `json:"user"`
+	Rating int  `json:"rating"`
+}
+
+type User struct {
+	Name  string `json:"name"`
+	Title string `json:"title"`
+}
+
+// Time control of a game, both values are in seconds
+type Clock struct {
+	Initial   int `json:"initial"`
+	Increment int `json:"increment"`
 }
 
 type TopBot struct {
@@ -123,7 +137,7 @@ func (tb *TopBot) PollTopGames(ctx context.Context) {
 			}
 
 			if isNew {
-				tb.SendMsgToTelegramIds(game.ID)
+				tb.SendMsgToTelegramIds(game)
 			}
 
 		}
@@ -243,8 +257,49 @@ func fetchTopGames() []Game {
 
 }
 
-func (tb *TopBot) SendMsgToTelegramIds(linkId string) {
-	tb.enqueue(outMsg{text: fmt.Sprintf("%s%s", base_url, linkId)})
+// Text sent for a game: the time control, both players and the link, for example
+//
+//	Rapid 10+0
+//	GM Player1 (2710) vs IM Player2 (2655)
+//	https://lichess.org/abcd1234
+//
+// The players are written in the msg because telegram can't always show a preview of the link.
+func gameText(game Game) string {
+
+	return fmt.Sprintf("Rapid %s\n%s vs %s\n%s%s",
+		clockText(game.Clock),
+		playerText(game.Players.White),
+		playerText(game.Players.Black),
+		base_url, game.ID,
+	)
+}
+
+// A player as "GM Name (2710)", the title is left out when the player has none
+func playerText(p Player) string {
+
+	name := p.User.Name
+
+	if name == "" {
+		name = "Anonymous"
+	}
+
+	if p.User.Title != "" {
+		name = p.User.Title + " " + name
+	}
+
+	return fmt.Sprintf("%s (%d)", name, p.Rating)
+}
+
+// A clock as lichess writes it, minutes+seconds, for example 600s and 5s is "10+5"
+func clockText(c Clock) string {
+
+	minutes := strconv.FormatFloat(float64(c.Initial)/60, 'f', -1, 64)
+
+	return fmt.Sprintf("%s+%d", minutes, c.Increment)
+}
+
+func (tb *TopBot) SendMsgToTelegramIds(game Game) {
+	tb.enqueue(outMsg{text: gameText(game)})
 }
 
 func (tb *TopBot) SendMaintananceMsg(msg string) {
