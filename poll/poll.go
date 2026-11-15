@@ -3,6 +3,7 @@ package poll
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -147,7 +148,6 @@ func fetchTopGames() []Game {
 
 // Delete links that have stayed in the map for more than 1 hour
 func (sw *SWbot) cleanUpMap(links *map[string]time.Time) {
-
 	// Run the clean up every 30 minutes
 	ticker := time.NewTicker(cleanUpTime)
 
@@ -168,29 +168,52 @@ func (sw *SWbot) cleanUpMap(links *map[string]time.Time) {
 func (sw *SWbot) LinksCount() int {
 	sw.mu.RLock()
 	defer sw.mu.RUnlock()
-
 	return len(*sw.Links)
 }
 
 func (sw *SWbot) SendMsgToTelegramIds(linkId string) {
 
-	ids, _ := sw.DB.GetActiveTgBotUsers(context.Background())
-	for _, id := range ids {
-		msg := tgbotapi.NewMessage(id, fmt.Sprintf("%s%s", base_url, linkId))
+	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
+	if err != nil {
+		slog.Error("failed to get active bot users", "err", err, "game", linkId)
+		return
+	}
 
-		sw.Bot.Send(msg)
+	for _, id := range ids {
+		sw.sendToUser(id, fmt.Sprintf("%s%s", base_url, linkId))
 	}
 }
 
 // Send a message to all active users when the bot is going for maintanance
 func (sw *SWbot) SendMaintananceMsg(msg string) {
 
-	ids, _ := sw.DB.GetActiveTgBotUsers(context.Background())
+	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
+	if err != nil {
+		slog.Error("failed to get active bot users", "err", err)
+		return
+	}
+
 	for _, id := range ids {
 		if id != Master_ID {
-			msg := tgbotapi.NewMessage(id, msg)
-			sw.Bot.Send(msg)
+			sw.sendToUser(id, msg)
 		}
+	}
+}
 
+// Send a text to user, A user who blocked the bot or deleted
+// their account (403) is marked inactive so we stop sending to them.
+func (sw *SWbot) sendToUser(id int64, text string) {
+	
+	_, err := sw.Bot.Send(tgbotapi.NewMessage(id, text))
+	if err == nil {
+		return
+	}
+	slog.Error("failed to send msg", "err", err, "user", id)
+	var tgErr *tgbotapi.Error
+	if errors.As(err, &tgErr) && tgErr.Code == http.StatusForbidden {
+		args := db.UpdateTgBotUsersParams{ID: id, Isactive: false}
+		if err := sw.DB.UpdateTgBotUsers(context.Background(), args); err != nil {
+			slog.Error("failed to deactivate bot user", "err", err, "user", id)
+		}
 	}
 }
