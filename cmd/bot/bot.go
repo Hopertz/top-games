@@ -31,12 +31,12 @@ import (
 )
 
 const (
-	start_txt       = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications`"
-	stop_txt        = "Sorry to see you leave. Type /start to receive"
-	unknown_cmd     = "I don't know that command"
-	master_only     = "Only @Hopertz is allowed"
-	failed_txt      = "Something went wrong, check the logs"
-	help_txt        = `Commands for this @TopRapidBot are:
+	start_txt   = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications"
+	stop_txt    = "Sorry to see you leave. Type /start to receive"
+	unknown_cmd = "I don't know that command"
+	master_only = "Only @Hopertz is allowed"
+	failed_txt  = "Something went wrong, check the logs"
+	help_txt    = `Commands for this @TopRapidBot are:
 
 /start  start the bot
 /stop   stop the bot
@@ -52,8 +52,8 @@ Owner commands:
 	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
 	connectTimeout  = 30 * time.Second
 	shutdownTimeout = 30 * time.Second
-	updatesTimeout  = 60  
-	httpTimeout     = 90 * time.Second 
+	updatesTimeout  = 60
+	httpTimeout     = 90 * time.Second
 )
 
 func init() {
@@ -106,7 +106,7 @@ func main() {
 		return
 	}
 
-	swbot := poll.New(bot, db.New(con), rdb)
+	topbot := poll.New(bot, db.New(con), rdb)
 
 	u := tgbotapi.NewUpdate(0)
 
@@ -117,7 +117,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go swbot.PollTopGames(ctx)
+	go topbot.PollTopGames(ctx)
 
 	slog.Info("bot started")
 
@@ -144,7 +144,7 @@ loop:
 
 		if !update.Message.Chat.IsPrivate() {
 			msg.Text = private_only
-			if _, err := swbot.Bot.Send(msg); err != nil {
+			if _, err := topbot.Bot.Send(msg); err != nil {
 				slog.Error("failed to send msg", "err", err, "msg", msg)
 			}
 			continue
@@ -160,7 +160,7 @@ loop:
 				ID:       update.Message.From.ID,
 				Isactive: true,
 			}
-			err := swbot.DB.InsertTgBotUsers(context.Background(), botUser)
+			err := topbot.DB.InsertTgBotUsers(context.Background(), botUser)
 
 			if err != nil {
 				slog.Error("failed to insert bot user", "err", err, "args", botUser)
@@ -171,7 +171,7 @@ loop:
 				ID:       update.Message.From.ID,
 				Isactive: false,
 			}
-			err := swbot.DB.UpdateTgBotUsers(context.Background(), botUser)
+			err := topbot.DB.UpdateTgBotUsers(context.Background(), botUser)
 			if err != nil {
 				slog.Error("failed to update bot user", "err", err, "args", botUser)
 			}
@@ -182,7 +182,7 @@ loop:
 				break
 			}
 
-			res, err := swbot.DB.GetActiveTgBotUsers(context.Background())
+			res, err := topbot.DB.GetActiveTgBotUsers(context.Background())
 			if err != nil {
 				slog.Error("failed to get bot active members", "err", err)
 				msg.Text = failed_txt
@@ -196,7 +196,7 @@ loop:
 				break
 			}
 
-			count, err := swbot.SentGamesCount()
+			count, err := topbot.SentGamesCount()
 			if err != nil {
 				slog.Error("failed to count sent games", "err", err)
 				msg.Text = failed_txt
@@ -222,11 +222,11 @@ loop:
 		}
 
 		if is_maintenance_txt {
-			swbot.SendMaintananceMsg(maintenance_txt)
+			topbot.SendMaintananceMsg(maintenance_txt)
 			is_maintenance_txt = false
 
 		} else {
-			if _, err := swbot.Bot.Send(msg); err != nil {
+			if _, err := topbot.Bot.Send(msg); err != nil {
 				slog.Error("failed to send msg", "err", err, "msg", msg)
 			}
 		}
@@ -238,7 +238,7 @@ loop:
 	// A second signal from here on stops the bot at once
 	stop()
 
-	if !swbot.WaitStopped(shutdownTimeout) {
+	if !topbot.WaitStopped(shutdownTimeout) {
 		slog.Error("shutdown timed out, some msgs were not sent")
 	}
 

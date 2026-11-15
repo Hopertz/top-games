@@ -45,7 +45,7 @@ jobs:
            source: ./topbot
            target: "/home/${{ secrets.USERNAME }}/projects/top-bot"
 
-      - name: Start ChessBot Swahili  service and Reload Nginx
+      - name: Restart topbot service
         uses: appleboy/ssh-action@master
         with:
            host: ${{ secrets.HOST }}

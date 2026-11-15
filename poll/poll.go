@@ -37,7 +37,7 @@ type Player struct {
 	Rating int `json:"rating"`
 }
 
-type SWbot struct {
+type TopBot struct {
 	Bot   *tgbotapi.BotAPI
 	DB    db.Queries
 	Redis *redis.Client
@@ -47,15 +47,14 @@ type SWbot struct {
 	sendStopped chan struct{} // closed when the sender has sent what was left in the queue
 }
 
-
 type outMsg struct {
 	text       string
 	skipMaster bool
 }
 
-func New(bot *tgbotapi.BotAPI, queries *db.Queries, rdb *redis.Client) *SWbot {
+func New(bot *tgbotapi.BotAPI, queries *db.Queries, rdb *redis.Client) *TopBot {
 
-	return &SWbot{
+	return &TopBot{
 		Bot:   bot,
 		DB:    *queries,
 		Redis: rdb,
@@ -77,28 +76,16 @@ const (
 	minRoundTime   = 1 * time.Second
 )
 
-type Member struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Title     string `json:"title,omitempty"`
-	Online    bool   `json:"online"`
-	Playing   bool   `json:"playing"`
-	Streaming bool   `json:"streaming"`
-	Patron    bool   `json:"patron"`
-	PlayingId string `json:"playingId"`
-}
-
-
 // Poll games after every one minute, filter by rating (>2600), record them in redis if not present & notify bot users
 // Stops when ctx is cancelled.
-func (sw *SWbot) PollTopGames(ctx context.Context) {
+func (tb *TopBot) PollTopGames(ctx context.Context) {
 
-	defer close(sw.pollStopped)
+	defer close(tb.pollStopped)
 
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
-	go sw.sender(ctx)
+	go tb.sender(ctx)
 
 	for {
 
@@ -128,14 +115,14 @@ func (sw *SWbot) PollTopGames(ctx context.Context) {
 				continue
 			}
 
-			isNew, err := sw.markGameSent(game.ID)
+			isNew, err := tb.markGameSent(game.ID)
 			if err != nil {
 				slog.Error("failed to record game in redis", "err", err, "game", game.ID)
 				continue
 			}
 
 			if isNew {
-				sw.SendMsgToTelegramIds(game.ID)
+				tb.SendMsgToTelegramIds(game.ID)
 			}
 
 		}
@@ -145,12 +132,12 @@ func (sw *SWbot) PollTopGames(ctx context.Context) {
 
 // Record a game in redis, the key deletes itself after sentGameTTL.
 // Returns true when the game was not recorded before.
-func (sw *SWbot) markGameSent(gameId string) (bool, error) {
+func (tb *TopBot) markGameSent(gameId string) (bool, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
 	defer cancel()
 
-	err := sw.Redis.SetArgs(ctx, sentGamePrefix+gameId, time.Now().Unix(), redis.SetArgs{
+	err := tb.Redis.SetArgs(ctx, sentGamePrefix+gameId, time.Now().Unix(), redis.SetArgs{
 		Mode: "NX",
 		TTL:  sentGameTTL,
 	}).Err()
@@ -168,12 +155,12 @@ func (sw *SWbot) markGameSent(gameId string) (bool, error) {
 }
 
 // Number of games recorded in redis
-func (sw *SWbot) SentGamesCount() (int64, error) {
+func (tb *TopBot) SentGamesCount() (int64, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
 	defer cancel()
 
-	return sw.Redis.DBSize(ctx).Result()
+	return tb.Redis.DBSize(ctx).Result()
 }
 
 // Fetch top rapid games on lichess and store them in list
@@ -227,28 +214,26 @@ func fetchTopGames() []Game {
 
 }
 
-func (sw *SWbot) SendMsgToTelegramIds(linkId string) {
-	sw.enqueue(outMsg{text: fmt.Sprintf("%s%s", base_url, linkId)})
+func (tb *TopBot) SendMsgToTelegramIds(linkId string) {
+	tb.enqueue(outMsg{text: fmt.Sprintf("%s%s", base_url, linkId)})
 }
 
-func (sw *SWbot) SendMaintananceMsg(msg string) {
-	sw.enqueue(outMsg{text: msg, skipMaster: true})
+func (tb *TopBot) SendMaintananceMsg(msg string) {
+	tb.enqueue(outMsg{text: msg, skipMaster: true})
 }
 
-
-func (sw *SWbot) enqueue(m outMsg) {
+func (tb *TopBot) enqueue(m outMsg) {
 
 	select {
-	case sw.queue <- m:
+	case tb.queue <- m:
 	default:
 		slog.Error("send queue is full, dropping msg", "text", m.text)
 	}
 }
 
+func (tb *TopBot) sender(ctx context.Context) {
 
-func (sw *SWbot) sender(ctx context.Context) {
-
-	defer close(sw.sendStopped)
+	defer close(tb.sendStopped)
 
 	pace := time.NewTicker(sendInterval)
 	defer pace.Stop()
@@ -256,18 +241,18 @@ func (sw *SWbot) sender(ctx context.Context) {
 	for {
 
 		select {
-		case m := <-sw.queue:
-			sw.broadcast(m, pace)
+		case m := <-tb.queue:
+			tb.broadcast(m, pace)
 
 		case <-ctx.Done():
 			// Shutting down: wait for the poller so nothing new is queued,
 			// send what is left in the queue, then stop
-			<-sw.pollStopped
+			<-tb.pollStopped
 
 			for {
 				select {
-				case m := <-sw.queue:
-					sw.broadcast(m, pace)
+				case m := <-tb.queue:
+					tb.broadcast(m, pace)
 				default:
 					return
 				}
@@ -277,11 +262,11 @@ func (sw *SWbot) sender(ctx context.Context) {
 }
 
 // Send one queued message to all active users
-func (sw *SWbot) broadcast(m outMsg, pace *time.Ticker) {
+func (tb *TopBot) broadcast(m outMsg, pace *time.Ticker) {
 
 	start := time.Now()
 
-	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
+	ids, err := tb.DB.GetActiveTgBotUsers(context.Background())
 	if err != nil {
 		slog.Error("failed to get active bot users", "err", err, "text", m.text)
 		return
@@ -293,7 +278,7 @@ func (sw *SWbot) broadcast(m outMsg, pace *time.Ticker) {
 		}
 
 		<-pace.C
-		sw.sendToUser(id, m.text)
+		tb.sendToUser(id, m.text)
 	}
 
 	time.Sleep(minRoundTime - time.Since(start))
@@ -301,10 +286,10 @@ func (sw *SWbot) broadcast(m outMsg, pace *time.Ticker) {
 
 // Wait until the sender has sent what was left in the queue.
 // Returns false when it did not finish within the timeout.
-func (sw *SWbot) WaitStopped(timeout time.Duration) bool {
+func (tb *TopBot) WaitStopped(timeout time.Duration) bool {
 
 	select {
-	case <-sw.sendStopped:
+	case <-tb.sendStopped:
 		return true
 	case <-time.After(timeout):
 		return false
@@ -314,16 +299,16 @@ func (sw *SWbot) WaitStopped(timeout time.Duration) bool {
 // Send a text to user. When telegram says we are too fast (429) wait
 // as long as it asks and retry once. A user who blocked the bot or deleted
 // their account (403) is marked inactive so we stop sending to them.
-func (sw *SWbot) sendToUser(id int64, text string) {
+func (tb *TopBot) sendToUser(id int64, text string) {
 
 	msg := tgbotapi.NewMessage(id, text)
 
-	_, err := sw.Bot.Send(msg)
+	_, err := tb.Bot.Send(msg)
 
 	var tgErr *tgbotapi.Error
 	if errors.As(err, &tgErr) && tgErr.Code == http.StatusTooManyRequests {
 		time.Sleep(time.Duration(tgErr.RetryAfter) * time.Second)
-		_, err = sw.Bot.Send(msg)
+		_, err = tb.Bot.Send(msg)
 	}
 
 	if err == nil {
@@ -334,7 +319,7 @@ func (sw *SWbot) sendToUser(id int64, text string) {
 
 	if errors.As(err, &tgErr) && tgErr.Code == http.StatusForbidden {
 		args := db.UpdateTgBotUsersParams{ID: id, Isactive: false}
-		if err := sw.DB.UpdateTgBotUsers(context.Background(), args); err != nil {
+		if err := tb.DB.UpdateTgBotUsers(context.Background(), args); err != nil {
 			slog.Error("failed to deactivate bot user", "err", err, "user", id)
 		}
 	}
