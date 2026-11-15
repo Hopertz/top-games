@@ -32,6 +32,20 @@ const (
 	start_txt       = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications`"
 	stop_txt        = "Sorry to see you leave. Type /start to receive"
 	unknown_cmd     = "I don't know that command"
+	master_only     = "Only @Hopertz is allowed"
+	failed_txt      = "Something went wrong, check the logs"
+	help_txt        = `Commands for this @TopRapidBot are:
+
+/start  start the bot
+/stop   stop the bot
+/help   this message`
+	master_help_txt = `
+
+Owner commands:
+
+/subs   total subscribers
+/list   current games in a list
+/sm     send maintanance msg`
 	maintenance_txt = "Service will resume shortly"
 	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
 	connectTimeout  = 30 * time.Second
@@ -117,6 +131,9 @@ func main() {
 			continue
 		}
 
+		// Some commands are for the bot owner only
+		isMaster := update.Message.From.ID == poll.Master_ID
+
 		switch update.Message.Command() {
 		case "start":
 			msg.Text = start_txt
@@ -141,36 +158,45 @@ func main() {
 			}
 			msg.Text = stop_txt
 		case "subs":
+			if !isMaster {
+				msg.Text = master_only
+				break
+			}
+
 			res, err := swbot.DB.GetActiveTgBotUsers(context.Background())
 			if err != nil {
 				slog.Error("failed to get bot active members", "err", err)
+				msg.Text = failed_txt
+				break
 			}
 			msg.Text = fmt.Sprintf("There are %d subscribers in @TopRapidBot", len(res))
 
 		case "list":
+			if !isMaster {
+				msg.Text = master_only
+				break
+			}
+
 			count, err := swbot.SentGamesCount()
 			if err != nil {
 				slog.Error("failed to count sent games", "err", err)
+				msg.Text = failed_txt
+				break
 			}
 			msg.Text = fmt.Sprintf("There are %d in a list so far.", count)
 
 		case "sm":
-			if poll.Master_ID == update.Message.From.ID {
+			if isMaster {
 				is_maintenance_txt = true
-			}else {
-				msg.Text = "Only @Hopertz is allowed"
+			} else {
+				msg.Text = master_only
 			}
 
 		case "help":
-			msg.Text = `
-			Commands for this @TopRapidBot are:
-			
-			/start  start the bot
-			/stop   stop the bot 
-			/subs    total subscribers
-			/list    current games in a list
-			/help   this message
-			/sm     send maintanance msg			`
+			msg.Text = help_txt
+			if isMaster {
+				msg.Text += master_help_txt
+			}
 
 		default:
 			msg.Text = unknown_cmd
