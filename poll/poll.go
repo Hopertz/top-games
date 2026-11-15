@@ -42,6 +42,9 @@ type SWbot struct {
 	DB    db.Queries
 	Redis *redis.Client
 	queue chan outMsg
+
+	pollStopped chan struct{} // closed when the poller has stopped
+	sendStopped chan struct{} // closed when the sender has sent what was left in the queue
 }
 
 
@@ -57,6 +60,9 @@ func New(bot *tgbotapi.BotAPI, queries *db.Queries, rdb *redis.Client) *SWbot {
 		DB:    *queries,
 		Redis: rdb,
 		queue: make(chan outMsg, queueSize),
+
+		pollStopped: make(chan struct{}),
+		sendStopped: make(chan struct{}),
 	}
 }
 
@@ -84,18 +90,32 @@ type Member struct {
 
 
 // Poll games after every one minute, filter by rating (>2600), record them in redis if not present & notify bot users
-func (sw *SWbot) PollTopGames() {
+// Stops when ctx is cancelled.
+func (sw *SWbot) PollTopGames(ctx context.Context) {
+
+	defer close(sw.pollStopped)
 
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
-	go sw.sender()
+	go sw.sender(ctx)
 
-	for range ticker.C {
+	for {
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 
 		games := fetchTopGames()
 
 		for _, game := range games {
+
+			// Stop recording new games once we are shutting down
+			if ctx.Err() != nil {
+				return
+			}
 
 			if !game.Rated || game.Status != "started" {
 				continue
@@ -226,31 +246,68 @@ func (sw *SWbot) enqueue(m outMsg) {
 }
 
 
-func (sw *SWbot) sender() {
+func (sw *SWbot) sender(ctx context.Context) {
+
+	defer close(sw.sendStopped)
 
 	pace := time.NewTicker(sendInterval)
 	defer pace.Stop()
 
-	for m := range sw.queue {
+	for {
 
-		start := time.Now()
+		select {
+		case m := <-sw.queue:
+			sw.broadcast(m, pace)
 
-		ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
-		if err != nil {
-			slog.Error("failed to get active bot users", "err", err, "text", m.text)
+		case <-ctx.Done():
+			// Shutting down: wait for the poller so nothing new is queued,
+			// send what is left in the queue, then stop
+			<-sw.pollStopped
+
+			for {
+				select {
+				case m := <-sw.queue:
+					sw.broadcast(m, pace)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// Send one queued message to all active users
+func (sw *SWbot) broadcast(m outMsg, pace *time.Ticker) {
+
+	start := time.Now()
+
+	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
+	if err != nil {
+		slog.Error("failed to get active bot users", "err", err, "text", m.text)
+		return
+	}
+
+	for _, id := range ids {
+		if m.skipMaster && id == Master_ID {
 			continue
 		}
 
-		for _, id := range ids {
-			if m.skipMaster && id == Master_ID {
-				continue
-			}
+		<-pace.C
+		sw.sendToUser(id, m.text)
+	}
 
-			<-pace.C
-			sw.sendToUser(id, m.text)
-		}
+	time.Sleep(minRoundTime - time.Since(start))
+}
 
-		time.Sleep(minRoundTime - time.Since(start))
+// Wait until the sender has sent what was left in the queue.
+// Returns false when it did not finish within the timeout.
+func (sw *SWbot) WaitStopped(timeout time.Duration) bool {
+
+	select {
+	case <-sw.sendStopped:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 	"net/http"
 
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Hopertz/topgames/certs"
@@ -49,6 +51,7 @@ Owner commands:
 	maintenance_txt = "Service will resume shortly"
 	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
 	connectTimeout  = 30 * time.Second
+	shutdownTimeout = 30 * time.Second
 	updatesTimeout  = 60  
 	httpTimeout     = 90 * time.Second 
 )
@@ -110,9 +113,25 @@ func main() {
 	u.Timeout = updatesTimeout
 	updates := bot.GetUpdatesChan(u)
 
-	go swbot.PollTopGames()
+	// ctx is cancelled when systemd stops the service (SIGTERM) or on Ctrl+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	for update := range updates {
+	go swbot.PollTopGames(ctx)
+
+	slog.Info("bot started")
+
+loop:
+	for {
+
+		var update tgbotapi.Update
+
+		select {
+		case <-ctx.Done():
+			break loop
+		case update = <-updates:
+		}
+
 		if update.Message == nil {
 			continue
 		}
@@ -213,6 +232,20 @@ func main() {
 		}
 
 	}
+
+	slog.Info("shutting down, sending what is left in the queue")
+
+	// A second signal from here on stops the bot at once
+	stop()
+
+	if !swbot.WaitStopped(shutdownTimeout) {
+		slog.Error("shutdown timed out, some msgs were not sent")
+	}
+
+	rdb.Close()
+	con.Close()
+
+	slog.Info("bot stopped")
 }
 
 // TLS settings that only trust servers signed by the Schema certificate authority
