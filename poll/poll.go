@@ -8,11 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	db "github.com/Hopertz/topgames/db/sqlc"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 const top_games_url = "https://lichess.org/api/tv/rapid?nb=30&moves=false&tags=false"
@@ -39,9 +39,8 @@ type Player struct {
 
 type SWbot struct {
 	Bot   *tgbotapi.BotAPI
-	Links *map[string]time.Time
-	mu    sync.RWMutex
 	DB    db.Queries
+	Redis *redis.Client
 	queue chan outMsg
 }
 
@@ -51,26 +50,25 @@ type outMsg struct {
 	skipMaster bool
 }
 
-func New(bot *tgbotapi.BotAPI, queries *db.Queries) *SWbot {
-
-	links := make(map[string]time.Time)
+func New(bot *tgbotapi.BotAPI, queries *db.Queries, rdb *redis.Client) *SWbot {
 
 	return &SWbot{
 		Bot:   bot,
-		Links: &links,
 		DB:    *queries,
+		Redis: rdb,
 		queue: make(chan outMsg, queueSize),
 	}
 }
 
 const (
-	base_url         = "https://lichess.org/"
-	minLinkStayInMap = 1 * time.Hour
-	cleanUpTime      = 30 * time.Minute
-	Master_ID        = 731217828
-	queueSize        = 100
-	sendInterval     = 40 * time.Millisecond
-	minRoundTime     = 1 * time.Second
+	base_url       = "https://lichess.org/"
+	sentGamePrefix = "sent:"
+	sentGameTTL    = 24 * time.Hour
+	redisTimeout   = 10 * time.Second
+	Master_ID      = 731217828
+	queueSize      = 100
+	sendInterval   = 40 * time.Millisecond
+	minRoundTime   = 1 * time.Second
 )
 
 type Member struct {
@@ -85,13 +83,12 @@ type Member struct {
 }
 
 
-// Poll games after every one minute, filter by rating (>2600), store them if not present in a map  & notify bot users
+// Poll games after every one minute, filter by rating (>2600), record them in redis if not present & notify bot users
 func (sw *SWbot) PollTopGames() {
 
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
-	go sw.cleanUpMap(sw.Links)
 	go sw.sender()
 
 	for range ticker.C {
@@ -100,27 +97,63 @@ func (sw *SWbot) PollTopGames() {
 
 		for _, game := range games {
 
-			sw.mu.RLock()
-			_, idExists := (*sw.Links)[game.ID]
-			sw.mu.RUnlock()
+			if !game.Rated || game.Status != "started" {
+				continue
+			}
 
-			if game.Rated && game.Status == "started" && !idExists {
-				w := game.Players.White.Rating
-				b := game.Players.Black.Rating
+			w := game.Players.White.Rating
+			b := game.Players.Black.Rating
 
-				if w >= 2600 && b >= 2600 {
-					sw.mu.Lock()
-					(*sw.Links)[game.ID] = time.Now()
-					sw.mu.Unlock()
-					sw.SendMsgToTelegramIds(game.ID)
+			if w < 2600 || b < 2600 {
+				continue
+			}
 
-				} 
+			isNew, err := sw.markGameSent(game.ID)
+			if err != nil {
+				slog.Error("failed to record game in redis", "err", err, "game", game.ID)
+				continue
+			}
 
+			if isNew {
+				sw.SendMsgToTelegramIds(game.ID)
 			}
 
 		}
 
 	}
+}
+
+// Record a game in redis, the key deletes itself after sentGameTTL.
+// Returns true when the game was not recorded before.
+func (sw *SWbot) markGameSent(gameId string) (bool, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+
+	err := sw.Redis.SetArgs(ctx, sentGamePrefix+gameId, time.Now().Unix(), redis.SetArgs{
+		Mode: "NX",
+		TTL:  sentGameTTL,
+	}).Err()
+
+	// redis.Nil means the key already exists
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Number of games recorded in redis
+func (sw *SWbot) SentGamesCount() (int64, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+
+	return sw.Redis.DBSize(ctx).Result()
 }
 
 // Fetch top rapid games on lichess and store them in list
@@ -173,32 +206,6 @@ func fetchTopGames() []Game {
 	return games
 
 }
-
-// Delete links that have stayed in the map for more than 1 hour
-func (sw *SWbot) cleanUpMap(links *map[string]time.Time) {
-	// Run the clean up every 30 minutes
-	ticker := time.NewTicker(cleanUpTime)
-
-	defer ticker.Stop()
-
-	for range ticker.C {
-		sw.mu.Lock()
-		for lichessId, timeAtStart := range *links {
-			if time.Since(timeAtStart) > minLinkStayInMap {
-				delete(*links, lichessId)
-			}
-		}
-		sw.mu.Unlock()
-	}
-}
-
-// Number of games currently tracked in the map
-func (sw *SWbot) LinksCount() int {
-	sw.mu.RLock()
-	defer sw.mu.RUnlock()
-	return len(*sw.Links)
-}
-
 
 func (sw *SWbot) SendMsgToTelegramIds(linkId string) {
 	sw.enqueue(outMsg{text: fmt.Sprintf("%s%s", base_url, linkId)})

@@ -2,19 +2,26 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"os"
 	"time"
 
+	"github.com/Hopertz/topgames/certs"
 	db "github.com/Hopertz/topgames/db/sqlc"
 	"github.com/Hopertz/topgames/poll"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -23,7 +30,7 @@ const (
 	unknown_cmd     = "I don't know that command"
 	maintenance_txt = "Service will resume shortly"
 	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
-	usersDB         = "users.db"
+	connectTimeout  = 30 * time.Second
 	updatesTimeout  = 60  
 	httpTimeout     = 90 * time.Second 
 )
@@ -40,12 +47,21 @@ func main() {
 
 	var is_maintenance_txt = false
 	var bot_token string
+	var database_url string
+	var redis_url string
 
 	flag.StringVar(&bot_token, "bot-token", os.Getenv("TG_BOT_TOKEN"), "Bot Token")
+	flag.StringVar(&database_url, "database-url", os.Getenv("DATABASE_URL"), "Postgres connection string")
+	flag.StringVar(&redis_url, "redis-url", os.Getenv("REDIS_URL"), "Redis connection string")
 	flag.Parse()
 
 	if bot_token == "" {
 		slog.Error("Bot token or API url not provided")
+		return
+	}
+
+	if database_url == "" || redis_url == "" {
+		slog.Error("Database url or redis url not provided")
 		return
 	}
 
@@ -55,14 +71,21 @@ func main() {
 		return
 	}
 
-	con, err := initdB()
+	con, err := initPostgres(database_url)
 
 	if err != nil {
 		slog.Error("failed to connect to sql DB", "err", err)
 		return
 	}
 
-	swbot := poll.New(bot, db.New(con))
+	rdb, err := initRedis(redis_url)
+
+	if err != nil {
+		slog.Error("failed to connect to redis", "err", err)
+		return
+	}
+
+	swbot := poll.New(bot, db.New(con), rdb)
 
 	u := tgbotapi.NewUpdate(0)
 
@@ -121,7 +144,11 @@ func main() {
 			msg.Text = fmt.Sprintf("There are %d subscribers in @TopRapidBot", len(res))
 
 		case "list":
-			msg.Text = fmt.Sprintf("There are %d in a list so far.", swbot.LinksCount())
+			count, err := swbot.SentGamesCount()
+			if err != nil {
+				slog.Error("failed to count sent games", "err", err)
+			}
+			msg.Text = fmt.Sprintf("There are %d in a list so far.", count)
 
 		case "sm":
 			if poll.Master_ID == update.Message.From.ID {
@@ -157,21 +184,49 @@ func main() {
 
 	}
 }
-func initdB() (*sql.DB, error) {
-	
-	db, err := sql.Open("sqlite3", fmt.Sprintf("./%s", usersDB))
+
+// TLS settings that only trust servers signed by the Schema certificate authority
+func schemaTLS(host string) (*tls.Config, error) {
+
+	pool := x509.NewCertPool()
+
+	if !pool.AppendCertsFromPEM(certs.SchemaCA) {
+		return nil, errors.New("failed to load schema ca certificate")
+	}
+
+	return &tls.Config{
+		RootCAs:    pool,
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	}, nil
+}
+
+func initPostgres(databaseURL string) (*sql.DB, error) {
+
+	cfg, err := pgx.ParseConfig(databaseURL)
 
 	if err != nil {
-		slog.Error("Error opening db file", "err", err)
+		slog.Error("Error parsing database url", "err", err)
 		return nil, err
 	}
 
+	cfg.TLSConfig, err = schemaTLS(cfg.Host)
+
+	if err != nil {
+		return nil, err
+	}
+
+	db := stdlib.OpenDB(*cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+
 	stmt := `CREATE TABLE IF NOT EXISTS tgbot_users (
-               id INTEGER NOT NULL PRIMARY KEY,
+               id BIGINT NOT NULL PRIMARY KEY,
                isactive BOOLEAN NOT NULL
             );`
 
-	_, err = db.Exec(stmt)
+	_, err = db.ExecContext(ctx, stmt)
 
 	if err != nil {
 		slog.Error("Error executing create table stmt", "err", err)
@@ -179,5 +234,41 @@ func initdB() (*sql.DB, error) {
 	}
 
 	return db, nil
+
+}
+
+func initRedis(redisURL string) (*redis.Client, error) {
+
+	opt, err := redis.ParseURL(redisURL)
+
+	if err != nil {
+		slog.Error("Error parsing redis url", "err", err)
+		return nil, err
+	}
+
+	host, _, err := net.SplitHostPort(opt.Addr)
+
+	if err != nil {
+		slog.Error("Error reading redis host", "err", err)
+		return nil, err
+	}
+
+	opt.TLSConfig, err = schemaTLS(host)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rdb := redis.NewClient(opt)
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		slog.Error("Error pinging redis", "err", err)
+		return nil, err
+	}
+
+	return rdb, nil
 
 }

@@ -37,7 +37,7 @@ func (q *Queries) GetActiveTgBotUsers(ctx context.Context) ([]int64, error) {
 }
 
 const insertTgBotUsers = `-- name: InsertTgBotUsers :exec
-INSERT INTO tgbot_users (id, isactive) VALUES (?, ?)
+INSERT INTO tgbot_users (id, isactive) VALUES ($1, $2)
 ON CONFLICT (id) DO UPDATE SET isactive = excluded.isactive
 `
 
@@ -52,7 +52,7 @@ func (q *Queries) InsertTgBotUsers(ctx context.Context, arg InsertTgBotUsersPara
 }
 
 const updateTgBotUsers = `-- name: UpdateTgBotUsers :exec
-UPDATE tgbot_users SET isactive = ? WHERE id = ?
+UPDATE tgbot_users SET isactive = $1 WHERE id = $2
 `
 
 type UpdateTgBotUsersParams struct {
