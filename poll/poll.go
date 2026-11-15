@@ -70,6 +70,7 @@ const (
 	sentGamePrefix = "sent:"
 	sentGameTTL    = 24 * time.Hour
 	redisTimeout   = 10 * time.Second
+	dbTimeout      = 10 * time.Second
 	Master_ID      = 731217828
 	queueSize      = 100
 	sendInterval   = 40 * time.Millisecond
@@ -128,6 +129,34 @@ func (tb *TopBot) PollTopGames(ctx context.Context) {
 		}
 
 	}
+}
+
+// Mark a user active so they receive game links, adding them when they are new.
+// Gives up after dbTimeout.
+func (tb *TopBot) Subscribe(id int64) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	return tb.DB.InsertTgBotUsers(ctx, db.InsertTgBotUsersParams{ID: id, Isactive: true})
+}
+
+// Mark a user inactive so they stop receiving game links. Gives up after dbTimeout.
+func (tb *TopBot) Unsubscribe(id int64) error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	return tb.DB.UpdateTgBotUsers(ctx, db.UpdateTgBotUsersParams{ID: id, Isactive: false})
+}
+
+// Ids of all active users. Gives up after dbTimeout.
+func (tb *TopBot) ActiveUsers() ([]int64, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	return tb.DB.GetActiveTgBotUsers(ctx)
 }
 
 // Record a game in redis, the key deletes itself after sentGameTTL.
@@ -266,7 +295,7 @@ func (tb *TopBot) broadcast(m outMsg, pace *time.Ticker) {
 
 	start := time.Now()
 
-	ids, err := tb.DB.GetActiveTgBotUsers(context.Background())
+	ids, err := tb.ActiveUsers()
 	if err != nil {
 		slog.Error("failed to get active bot users", "err", err, "text", m.text)
 		return
@@ -318,8 +347,7 @@ func (tb *TopBot) sendToUser(id int64, text string) {
 	slog.Error("failed to send msg", "err", err, "user", id)
 
 	if errors.As(err, &tgErr) && tgErr.Code == http.StatusForbidden {
-		args := db.UpdateTgBotUsersParams{ID: id, Isactive: false}
-		if err := tb.DB.UpdateTgBotUsers(context.Background(), args); err != nil {
+		if err := tb.Unsubscribe(id); err != nil {
 			slog.Error("failed to deactivate bot user", "err", err, "user", id)
 		}
 	}

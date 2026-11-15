@@ -31,12 +31,13 @@ import (
 )
 
 const (
-	start_txt   = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications"
-	stop_txt    = "Sorry to see you leave. You will no longer receive game links. Type /start to receive them again."
-	unknown_cmd = "I don't know that command"
-	master_only = "Only @Hopertz is allowed"
-	failed_txt  = "Something went wrong, check the logs"
-	help_txt    = `Commands for this @TopRapidBot are:
+	start_txt     = "Use this bot to get link of top rated games between players of rating 2600's and above. Type /stop to stop receiving notifications"
+	stop_txt      = "Sorry to see you leave. You will no longer receive game links. Type /start to receive them again."
+	unknown_cmd   = "I don't know that command"
+	master_only   = "Only @Hopertz is allowed"
+	failed_txt    = "Something went wrong, check the logs"
+	try_again_txt = "Something went wrong, please try again in a few minutes"
+	help_txt      = `Commands for this @TopRapidBot are:
 
 /start  start the bot
 /stop   stop the bot
@@ -51,6 +52,7 @@ Owner commands:
 	maintenance_txt = "Service will resume shortly"
 	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
 	connectTimeout  = 30 * time.Second
+	migrateTimeout  = 90 * time.Second
 	shutdownTimeout = 30 * time.Second
 	updatesTimeout  = 60
 	httpTimeout     = 90 * time.Second
@@ -156,33 +158,27 @@ loop:
 		switch update.Message.Command() {
 		case "start":
 			msg.Text = start_txt
-			botUser := db.InsertTgBotUsersParams{
-				ID:       update.Message.From.ID,
-				Isactive: true,
-			}
-			err := topbot.DB.InsertTgBotUsers(context.Background(), botUser)
+			err := topbot.Subscribe(update.Message.From.ID)
 
 			if err != nil {
-				slog.Error("failed to insert bot user", "err", err, "args", botUser)
+				slog.Error("failed to insert bot user", "err", err, "user", update.Message.From.ID)
+				msg.Text = try_again_txt
 			}
 
 		case "stop":
-			botUser := db.UpdateTgBotUsersParams{
-				ID:       update.Message.From.ID,
-				Isactive: false,
-			}
-			err := topbot.DB.UpdateTgBotUsers(context.Background(), botUser)
-			if err != nil {
-				slog.Error("failed to update bot user", "err", err, "args", botUser)
-			}
 			msg.Text = stop_txt
+			err := topbot.Unsubscribe(update.Message.From.ID)
+			if err != nil {
+				slog.Error("failed to update bot user", "err", err, "user", update.Message.From.ID)
+				msg.Text = try_again_txt
+			}
 		case "subs":
 			if !isMaster {
 				msg.Text = master_only
 				break
 			}
 
-			res, err := topbot.DB.GetActiveTgBotUsers(context.Background())
+			res, err := topbot.ActiveUsers()
 			if err != nil {
 				slog.Error("failed to get bot active members", "err", err)
 				msg.Text = failed_txt
@@ -279,7 +275,25 @@ func initPostgres(databaseURL string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	if err := runMigrations(cfg); err != nil {
+	// Give up on a connection attempt that hangs
+	if cfg.ConnectTimeout == 0 {
+		cfg.ConnectTimeout = connectTimeout
+	}
+
+	// The migration library takes no time limit, so run it on the side and stop waiting after migrateTimeout
+	done := make(chan error, 1)
+
+	go func() { done <- runMigrations(cfg) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			slog.Error("Error running migrations", "err", err)
+			return nil, err
+		}
+
+	case <-time.After(migrateTimeout):
+		err := errors.New("timed out running migrations")
 		slog.Error("Error running migrations", "err", err)
 		return nil, err
 	}
