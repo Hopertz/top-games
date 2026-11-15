@@ -66,6 +66,7 @@ const (
 	Master_ID        = 731217828
 	queueSize        = 100
 	sendInterval     = 40 * time.Millisecond
+	minRoundTime     = 1 * time.Second
 )
 
 type Member struct {
@@ -220,6 +221,8 @@ func (sw *SWbot) sender() {
 
 	for m := range sw.queue {
 
+		start := time.Now()
+
 		ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
 		if err != nil {
 			slog.Error("failed to get active bot users", "err", err, "text", m.text)
@@ -234,6 +237,8 @@ func (sw *SWbot) sender() {
 			<-pace.C
 			sw.sendToUser(id, m.text)
 		}
+
+		time.Sleep(minRoundTime - time.Since(start))
 	}
 }
 
