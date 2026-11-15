@@ -23,6 +23,7 @@ const (
 	stop_txt        = "Sorry to see you leave. Type /start to receive"
 	unknown_cmd     = "I don't know that command"
 	maintenance_txt = "Service will resume shortly"
+	private_only    = "This bot works in private chats only. Message @TopRapidBot directly and type /start"
 	usersDB         = "users.db"
 	updatesTimeout  = 60  
 	httpTimeout     = 90 * time.Second 
@@ -81,6 +82,14 @@ func main() {
 		}
 
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+
+		if !update.Message.Chat.IsPrivate() {
+			msg.Text = private_only
+			if _, err := swbot.Bot.Send(msg); err != nil {
+				slog.Error("failed to send msg", "err", err, "msg", msg)
+			}
+			continue
+		}
 
 		switch update.Message.Command() {
 		case "start":
