@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -159,24 +158,7 @@ func main() {
 	}
 }
 func initdB() (*sql.DB, error) {
-
-	_, err := os.Stat(usersDB)
-
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			_, err := os.Create(usersDB)
-			if err != nil {
-				slog.Error("failed to create db file", "err", err)
-				return nil, err
-			}
-
-		} else {
-			slog.Error("Error getting info db file", "err", err)
-			return nil, err
-		}
-
-	}
-
+	
 	db, err := sql.Open("sqlite3", fmt.Sprintf("./%s", usersDB))
 
 	if err != nil {
