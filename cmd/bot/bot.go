@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"os"
 	"time"
@@ -23,6 +24,8 @@ const (
 	unknown_cmd     = "I don't know that command"
 	maintenance_txt = "Service will resume shortly"
 	usersDB         = "users.db"
+	updatesTimeout  = 60  
+	httpTimeout     = 90 * time.Second 
 )
 
 func init() {
@@ -46,7 +49,7 @@ func main() {
 		return
 	}
 
-	bot, err := tgbotapi.NewBotAPI(bot_token)
+	bot, err := tgbotapi.NewBotAPIWithClient(bot_token, tgbotapi.APIEndpoint, &http.Client{Timeout: httpTimeout})
 	if err != nil {
 		slog.Error("failed to create bot api instance", "err", err)
 		return
@@ -59,17 +62,11 @@ func main() {
 		return
 	}
 
-	links := make(map[string]time.Time)
-
-	swbot := &poll.SWbot{
-		Bot:   bot,
-		Links: &links,
-		DB:    *db.New(con),
-	}
+	swbot := poll.New(bot, db.New(con))
 
 	u := tgbotapi.NewUpdate(0)
 
-	u.Timeout = 60
+	u.Timeout = updatesTimeout
 	updates := bot.GetUpdatesChan(u)
 
 	go swbot.PollTopGames()

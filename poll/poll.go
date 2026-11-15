@@ -38,6 +38,25 @@ type SWbot struct {
 	Links *map[string]time.Time
 	mu    sync.RWMutex
 	DB    db.Queries
+	queue chan outMsg
+}
+
+
+type outMsg struct {
+	text       string
+	skipMaster bool
+}
+
+func New(bot *tgbotapi.BotAPI, queries *db.Queries) *SWbot {
+
+	links := make(map[string]time.Time)
+
+	return &SWbot{
+		Bot:   bot,
+		Links: &links,
+		DB:    *queries,
+		queue: make(chan outMsg, queueSize),
+	}
 }
 
 const (
@@ -45,6 +64,8 @@ const (
 	minLinkStayInMap = 1 * time.Hour
 	cleanUpTime      = 30 * time.Minute
 	Master_ID        = 731217828
+	queueSize        = 100
+	sendInterval     = 40 * time.Millisecond
 )
 
 type Member struct {
@@ -66,6 +87,7 @@ func (sw *SWbot) PollTopGames() {
 	defer ticker.Stop()
 
 	go sw.cleanUpMap(sw.Links)
+	go sw.sender()
 
 	for range ticker.C {
 
@@ -171,45 +193,71 @@ func (sw *SWbot) LinksCount() int {
 	return len(*sw.Links)
 }
 
+
 func (sw *SWbot) SendMsgToTelegramIds(linkId string) {
+	sw.enqueue(outMsg{text: fmt.Sprintf("%s%s", base_url, linkId)})
+}
 
-	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
-	if err != nil {
-		slog.Error("failed to get active bot users", "err", err, "game", linkId)
-		return
-	}
+func (sw *SWbot) SendMaintananceMsg(msg string) {
+	sw.enqueue(outMsg{text: msg, skipMaster: true})
+}
 
-	for _, id := range ids {
-		sw.sendToUser(id, fmt.Sprintf("%s%s", base_url, linkId))
+
+func (sw *SWbot) enqueue(m outMsg) {
+
+	select {
+	case sw.queue <- m:
+	default:
+		slog.Error("send queue is full, dropping msg", "text", m.text)
 	}
 }
 
-// Send a message to all active users when the bot is going for maintanance
-func (sw *SWbot) SendMaintananceMsg(msg string) {
 
-	ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
-	if err != nil {
-		slog.Error("failed to get active bot users", "err", err)
-		return
-	}
+func (sw *SWbot) sender() {
 
-	for _, id := range ids {
-		if id != Master_ID {
-			sw.sendToUser(id, msg)
+	pace := time.NewTicker(sendInterval)
+	defer pace.Stop()
+
+	for m := range sw.queue {
+
+		ids, err := sw.DB.GetActiveTgBotUsers(context.Background())
+		if err != nil {
+			slog.Error("failed to get active bot users", "err", err, "text", m.text)
+			continue
+		}
+
+		for _, id := range ids {
+			if m.skipMaster && id == Master_ID {
+				continue
+			}
+
+			<-pace.C
+			sw.sendToUser(id, m.text)
 		}
 	}
 }
 
-// Send a text to user, A user who blocked the bot or deleted
+// Send a text to user. When telegram says we are too fast (429) wait
+// as long as it asks and retry once. A user who blocked the bot or deleted
 // their account (403) is marked inactive so we stop sending to them.
 func (sw *SWbot) sendToUser(id int64, text string) {
-	
-	_, err := sw.Bot.Send(tgbotapi.NewMessage(id, text))
+
+	msg := tgbotapi.NewMessage(id, text)
+
+	_, err := sw.Bot.Send(msg)
+
+	var tgErr *tgbotapi.Error
+	if errors.As(err, &tgErr) && tgErr.Code == http.StatusTooManyRequests {
+		time.Sleep(time.Duration(tgErr.RetryAfter) * time.Second)
+		_, err = sw.Bot.Send(msg)
+	}
+
 	if err == nil {
 		return
 	}
+
 	slog.Error("failed to send msg", "err", err, "user", id)
-	var tgErr *tgbotapi.Error
+
 	if errors.As(err, &tgErr) && tgErr.Code == http.StatusForbidden {
 		args := db.UpdateTgBotUsersParams{ID: id, Isactive: false}
 		if err := sw.DB.UpdateTgBotUsers(context.Background(), args); err != nil {
